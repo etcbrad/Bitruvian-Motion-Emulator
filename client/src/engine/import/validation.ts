@@ -1,0 +1,121 @@
+import type { ImportResult, UniversalSkeleton } from './universalSkeleton';
+
+export class SkeletonValidator {
+  static validateUniversalSkeleton(skeleton: UniversalSkeleton): ImportResult {
+    const result: ImportResult = {
+      success: true,
+      joints: {},
+      mappings: [],
+      warnings: [],
+      errors: [],
+      metadata: {
+        sourceFormat: skeleton.source,
+        bonesImported: 0,
+        bonesMapped: 0,
+        bonesUnmapped: 0,
+      },
+    };
+
+    // Check required fields
+    if (!skeleton.name) {
+      result.errors.push('Skeleton name is required');
+      result.success = false;
+    }
+
+    if (!skeleton.bones || Object.keys(skeleton.bones).length === 0) {
+      result.errors.push('Skeleton must have at least one bone');
+      result.success = false;
+      return result;
+    }
+
+    // Validate root bone
+    if (!Array.isArray(skeleton.rootBoneIds) || skeleton.rootBoneIds.length === 0) {
+      result.warnings.push('No root bone specified, auto-detecting...');
+      skeleton.rootBoneIds = [this.findRootBone(skeleton)];
+    }
+
+    const rootBoneId = skeleton.rootBoneIds[0];
+    if (!rootBoneId || !skeleton.bones[rootBoneId]) {
+      result.errors.push(`Root bone '${rootBoneId || ''}' not found`);
+      result.success = false;
+    }
+
+    // Validate bone hierarchy
+    const cycles = this.detectCycles(skeleton.bones);
+    
+    if (cycles.length > 0) {
+      result.errors.push(`Cycles detected: ${cycles.join(', ')}`);
+      result.success = false;
+    }
+
+    // Validate parent references
+    Object.entries(skeleton.bones).forEach(([boneId, bone]) => {
+      if (bone.parentId && !skeleton.bones[bone.parentId]) {
+        result.warnings.push(`Bone '${boneId}' references non-existent parent '${bone.parentId}'`);
+      }
+    });
+
+    // Validate coordinate data
+    Object.entries(skeleton.bones).forEach(([boneId, bone]) => {
+      if (isNaN(bone.worldX) || isNaN(bone.worldY)) {
+        result.warnings.push(`Bone '${boneId}' has invalid coordinates`);
+      }
+
+      if (bone.scaleX <= 0 || bone.scaleY <= 0) {
+        result.warnings.push(`Bone '${boneId}' has invalid scale values`);
+      }
+    });
+
+    return result;
+  }
+
+  private static findRootBone(skeleton: UniversalSkeleton): string {
+    // Find bone with no parent
+    for (const [boneId, bone] of Object.entries(skeleton.bones)) {
+      if (!bone.parentId) {
+        return boneId;
+      }
+    }
+    
+    // Fallback: return first bone
+    return Object.keys(skeleton.bones)[0];
+  }
+
+  private static detectCycles(
+    bones: Record<string, any>
+  ): string[] {
+    const cycles: string[] = [];
+    const visited = new Set<string>();
+    const recursionStack = new Set<string>();
+
+    const dfs = (boneId: string, path: string[]): boolean => {
+      if (recursionStack.has(boneId)) {
+        cycles.push(path.slice(path.indexOf(boneId)).join(' -> '));
+      }
+      
+      if (visited.has(boneId)) {
+        return false;
+      }
+
+      visited.add(boneId);
+      recursionStack.add(boneId);
+
+      const bone = bones[boneId];
+      if (bone && bone.parentId) {
+        dfs(bone.parentId, [...path, boneId]);
+      }
+
+      recursionStack.delete(boneId);
+      return false;
+    };
+
+    // Check all bones for cycles, not just from startBone
+    Object.keys(bones).forEach(boneId => {
+      if (!visited.has(boneId)) {
+        dfs(boneId, []);
+      }
+    });
+
+    return cycles;
+  }
+}

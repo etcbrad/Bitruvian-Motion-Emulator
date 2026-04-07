@@ -1,0 +1,147 @@
+import type { CutoutSlot } from './types';
+import { INITIAL_JOINTS } from './model';
+
+// Helper function to calculate distance between two joints
+const calculateJointDistance = (fromJointId: string, toJointId: string): number => {
+  const fromJoint = INITIAL_JOINTS[fromJointId];
+  const toJoint = INITIAL_JOINTS[toJointId];
+  
+  if (!fromJoint || !toJoint) return 100; // Default distance if joints not found
+  
+  const dx = toJoint.baseOffset.x - fromJoint.baseOffset.x;
+  const dy = toJoint.baseOffset.y - fromJoint.baseOffset.y;
+  return Math.sqrt(dx * dx + dy * dy);
+};
+
+// Helper function to calculate optimal scale for a cutout based on joint distance
+const calculateOptimalScale = (fromJointId: string, toJointId: string, segmentWidth: number, segmentHeight: number): number => {
+  const jointDistance = calculateJointDistance(fromJointId, toJointId);
+  const maxSegmentDimension = Math.max(segmentWidth, segmentHeight);
+  
+  // Guard against division by zero
+  if (maxSegmentDimension <= 0) {
+    return 0;
+  }
+  
+  // Scale piece so its largest dimension matches joint distance
+  // with some padding to prevent overlap
+  const paddingFactor = 0.8; // Use 80% of joint distance
+  return (jointDistance * paddingFactor) / maxSegmentDimension;
+};
+
+// Export function to calculate and apply optimal scale for a segment
+export const calculateSegmentScale = (segment: { bounds: { width: number; height: number } }, slot: CutoutSlot): number => {
+  if (slot.attachment.type !== 'bone') return 1.0; // Only apply to bone attachments
+  
+  return calculateOptimalScale(
+    slot.attachment.fromJointId,
+    slot.attachment.toJointId,
+    segment.bounds.width,
+    segment.bounds.height
+  );
+};
+
+// Default bone slots based on human rig topology
+export const createDefaultCutoutSlots = (): Record<string, CutoutSlot> => {
+  const slots: Record<string, CutoutSlot> = {};
+
+  // Helper function to create a slot
+  const createSlot = (
+    id: string, 
+    name: string, 
+    fromJointId: string, 
+    toJointId: string,
+    zIndex: number = 50
+  ): CutoutSlot => ({
+    id,
+    name,
+    attachment: {
+      type: 'bone',
+      fromJointId,
+      toJointId,
+    },
+    originJointId: null,
+    assetId: null,
+    visible: false,
+    opacity: 1.0,
+    zIndex,
+    mode: 'cutout',
+    scale: 1.0,
+    lengthScale: 1.0,
+    volumePreserve: false,
+    offsetX: 0,
+    offsetY: 0,
+    rotation: 0,
+    anchorX: 0.5,
+    anchorY: 0.5,
+  });
+
+  // Simplified upper-body slots (Head > Collar > Torso)
+  slots['head'] = createSlot('head', 'Head', 'neck_base', 'head', 100);
+
+  // Collar covers the top seam of the torso and carries shoulders + neck/head.
+  slots['collar'] = {
+    ...createSlot('collar', 'Collar', 'sternum', 'collar', 75),
+    originJointId: 'sternum',
+    anchorY: 1,
+  };
+
+  // Left arm slots
+  slots['l_upper_arm'] = createSlot('l_upper_arm', 'L Upper Arm', 'l_clavicle', 'l_elbow', 40);
+  slots['l_forearm'] = createSlot('l_forearm', 'L Forearm', 'l_elbow', 'l_wrist', 35);
+  slots['l_hand'] = createSlot('l_hand', 'L Hand', 'l_wrist', 'l_fingertip', 30);
+
+  // Right arm slots
+  slots['r_upper_arm'] = createSlot('r_upper_arm', 'R Upper Arm', 'r_clavicle', 'r_elbow', 40);
+  slots['r_forearm'] = createSlot('r_forearm', 'R Forearm', 'r_elbow', 'r_wrist', 35);
+  slots['r_hand'] = createSlot('r_hand', 'R Hand', 'r_wrist', 'r_fingertip', 30);
+
+  // Left leg slots
+  slots['l_thigh'] = createSlot('l_thigh', 'L Thigh', 'l_hip', 'l_knee', 45);
+  slots['l_calf'] = createSlot('l_calf', 'L Calf', 'l_knee', 'l_ankle', 40);
+  slots['l_foot'] = createSlot('l_foot', 'L Foot', 'l_ankle', 'l_toe', 10);
+
+  // Right leg slots
+  slots['r_thigh'] = createSlot('r_thigh', 'R Thigh', 'r_hip', 'r_knee', 45);
+  slots['r_calf'] = createSlot('r_calf', 'R Calf', 'r_knee', 'r_ankle', 40);
+  slots['r_foot'] = createSlot('r_foot', 'R Foot', 'r_ankle', 'r_toe', 10);
+
+  // Torso slots
+  slots['torso'] = {
+    ...createSlot('torso', 'Torso', 'navel', 'sternum', 50),
+    originJointId: 'navel',
+    anchorY: 1,
+  };
+
+  // Optional waist/pelvis piece (mask optional per spec); spans hip-to-hip.
+  // Origin is the navel seam so it can split cleanly from the torso.
+  slots['waist'] = {
+    ...createSlot('waist', 'Waist', 'l_hip', 'r_hip', 49),
+    originJointId: 'navel',
+    anchorY: 0,
+    visible: false,
+  };
+
+  return slots;
+};
+
+// Helper function to get bone slot candidates from PARENT_MAP
+export const getBoneSlotCandidates = (): Array<{ id: string; name: string; fromJointId: string; toJointId: string }> => {
+  const candidates: Array<{ id: string; name: string; fromJointId: string; toJointId: string }> = [];
+  
+  // Create slots based on INITIAL_JOINTS parent relationships
+  for (const [jointId, joint] of Object.entries(INITIAL_JOINTS)) {
+    if (joint.parent && INITIAL_JOINTS[joint.parent]) {
+      // `root` is a technical joint; do not offer a `root -> navel` bone candidate.
+      if (joint.parent === 'root') continue;
+      candidates.push({
+        id: jointId,
+        name: jointId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        fromJointId: joint.parent,
+        toJointId: jointId,
+      });
+    }
+  }
+  
+  return candidates;
+};

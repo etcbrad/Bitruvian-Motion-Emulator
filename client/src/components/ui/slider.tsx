@@ -1,0 +1,135 @@
+"use client";
+
+import * as React from "react";
+import * as SliderPrimitive from "@radix-ui/react-slider";
+
+import { cn } from "@/lib/utils";
+
+type SliderProps = React.ComponentProps<typeof SliderPrimitive.Root> & {
+  trackClassName?: string;
+  rangeClassName?: string;
+  thumbClassName?: string;
+  trackStyle?: React.CSSProperties;
+  rangeStyle?: React.CSSProperties;
+  thumbStyle?: React.CSSProperties;
+};
+
+const sanitizeSliderValues = (values: unknown, fallback: number[]) => {
+  if (!Array.isArray(values)) return fallback;
+  const out = values
+    .map((v) => (typeof v === "number" && Number.isFinite(v) ? v : null))
+    .filter((v): v is number => v !== null);
+  return out.length ? out : fallback;
+};
+
+function Slider({
+  className,
+  defaultValue,
+  value,
+  min = 0,
+  max = 100,
+  trackClassName,
+  rangeClassName,
+  thumbClassName,
+  trackStyle,
+  rangeStyle,
+  thumbStyle,
+  onValueChange,
+  onPointerDownCapture,
+  onMouseDownCapture,
+  ...props
+}: SliderProps) {
+  const isControlled = value !== undefined;
+  const fallbackValues = React.useMemo(() => [min], [min]);
+  const sanitizedDefaultValue = React.useMemo(
+    () => sanitizeSliderValues(defaultValue, fallbackValues),
+    [defaultValue, fallbackValues],
+  );
+  const sanitizedValue = React.useMemo(
+    () => (isControlled ? sanitizeSliderValues(value, sanitizedDefaultValue) : undefined),
+    [isControlled, value, sanitizedDefaultValue],
+  );
+  const _values = React.useMemo(() => (isControlled ? sanitizedValue! : sanitizedDefaultValue), [isControlled, sanitizedDefaultValue, sanitizedValue]);
+
+  const onValueChangeRef = React.useRef<typeof onValueChange>(onValueChange);
+  React.useEffect(() => {
+    onValueChangeRef.current = onValueChange;
+  }, [onValueChange]);
+
+  const rafIdRef = React.useRef(0);
+  const latestValuesRef = React.useRef<number[] | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+    };
+  }, []);
+
+  const onValueChangeRaf = React.useCallback((values: number[]) => {
+    latestValuesRef.current = values;
+    if (rafIdRef.current) return;
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = 0;
+      const nextValues = latestValuesRef.current;
+      latestValuesRef.current = null;
+      if (!nextValues) return;
+      onValueChangeRef.current?.(nextValues);
+    });
+  }, []);
+
+  return (
+    <SliderPrimitive.Root
+      data-slot="slider"
+      min={min}
+      max={max}
+      {...(isControlled
+        ? { value: sanitizedValue }
+        : { defaultValue: sanitizedDefaultValue })}
+      onValueChange={onValueChange ? onValueChangeRaf : undefined}
+      onPointerDownCapture={(e) => {
+        onPointerDownCapture?.(e);
+        e.stopPropagation();
+      }}
+      onMouseDownCapture={(e) => {
+        onMouseDownCapture?.(e);
+        e.stopPropagation();
+      }}
+      className={cn(
+        "relative flex w-full touch-none items-center select-none data-[disabled]:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-44 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col",
+        className,
+      )}
+      {...props}
+    >
+      <SliderPrimitive.Track
+        data-slot="slider-track"
+        style={trackStyle}
+        className={cn(
+          "bg-muted relative grow overflow-hidden rounded-full data-[orientation=horizontal]:h-4 data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-1.5",
+          trackClassName,
+        )}
+      >
+        <SliderPrimitive.Range
+          data-slot="slider-range"
+          style={rangeStyle}
+          className={cn(
+            "bg-primary absolute data-[orientation=horizontal]:h-full data-[orientation=vertical]:w-full",
+            rangeClassName,
+          )}
+        />
+      </SliderPrimitive.Track>
+      {Array.from({ length: _values.length }, (_, index) => (
+        <SliderPrimitive.Thumb
+          data-slot="slider-thumb"
+          key={index}
+          style={thumbStyle}
+          className={cn(
+            "border-primary bg-background ring-ring/50 block size-4 shrink-0 rounded-full border shadow-sm transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50",
+            thumbClassName,
+          )}
+        />
+      ))}
+    </SliderPrimitive.Root>
+  );
+}
+
+export { Slider };
